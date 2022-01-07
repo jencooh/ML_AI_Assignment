@@ -1,0 +1,254 @@
+# Preliminaries: Inspect and Set up environment
+
+import datetime
+import pandas as pd
+import numpy as np
+
+print(datetime.datetime.now())
+
+!which python
+
+!python --version
+
+!echo $PYTHONPATH
+
+# TODO: install any packages you need to here. For example:
+#pip install unidecode
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import silhouette_score, silhouette_samples, calinski_harabasz_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.mixture import GaussianMixture
+import seaborn as sns
+
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+
+# Default plot settings
+SMALL_SIZE = 12
+MEDIUM_SIZE = 14
+BIGGER_SIZE = 16
+
+
+plt.rc('figure', figsize=[8.0, 5.0])     # controls the size of the figure
+plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+plt.rc('axes', grid=True)
+
+# DO NOT MODIFY THIS CELL
+df1 = pd.read_csv("DATA")
+df1.info()
+
+df1.describe().transpose()
+
+X = df1.copy()
+
+scaler = StandardScaler()
+features = ['Age', 'Income', 'SpendingScore', 'Savings']
+X[features] = scaler.fit_transform(X[features])
+
+X.shape
+X.info()
+X.describe().transpose()
+
+## 1.1: Clustering Algorithm #1
+
+#clustering without scaling
+k_means = KMeans(n_clusters = 5, random_state = 42)
+k_means.fit(df1)
+
+label_0 = k_means.labels_
+label_0
+
+#Check silhouette score and ch
+sil = silhouette_score(df1, label_0,  metric='euclidean')
+ch = calinski_harabasz_score(df1, label_0)
+
+print(sil)
+print(ch)
+
+# Using K-Means Clustering after scaling
+k_means1 = KMeans(n_clusters = 4, random_state = 42)
+k_means1.fit(X)
+
+label_1 = k_means1.labels_
+label_1
+
+k_means1.cluster_centers_
+
+#Check silhouette score and ch
+sil1 = silhouette_score(X, label_1,  metric='euclidean')
+ch1 = calinski_harabasz_score(X, label_1)
+
+print(sil)
+print(ch)
+
+#Hyperparameter Tuning with Elbow Method
+
+inertias = {}
+silhouettes = {}
+for k in range(2, 11):
+    kmeans = KMeans(n_clusters=k, random_state=42).fit(X)
+    inertias[k] = kmeans.inertia_ # Inertia: Sum of distances of samples to their closest cluster center
+    silhouettes[k] = silhouette_score(X, kmeans.labels_, metric='euclidean')
+    
+
+plt.figure();
+plt.plot(list(inertias.keys()), list(inertias.values()));
+plt.title('K-Means, Elbow Method')
+plt.xlabel("Number of clusters, K");
+plt.ylabel("Inertia");
+
+
+plt.figure();
+plt.plot(list(silhouettes.keys()), list(silhouettes.values()));
+plt.title('K-Means, Elbow Method')
+plt.xlabel("Number of clusters, K");
+plt.ylabel("Silhouette");
+
+
+Decide to use k=5
+
+# Using K-Means Clustering with k=5
+k_means2 = KMeans(n_clusters = 5, random_state = 42)
+k_means2.fit(X)
+
+label_2 = k_means2.labels_
+label_2
+
+k_means2.cluster_centers_
+
+#Check silhouette score and ch
+sil2 = silhouette_score(X, label_2,  metric='euclidean')
+ch2 = calinski_harabasz_score(X, label_2)
+
+print(sil2)
+print(ch2)
+
+Use improved clustering model with k=5
+
+#cluster means with inverse transform
+k_means_personas = pd.DataFrame(scaler.inverse_transform(k_means2.cluster_centers_),columns=['Age','Income','Spending Score','Savings'])
+k_means_personas
+
+#Example instances - personas
+np.set_printoptions(suppress=True)
+
+for label in set(label_2):
+    print('\nCluster {}:'.format(label))
+    print(scaler.inverse_transform(X[label_2==label].head()))
+
+#Feature Stats for each cluster
+
+Q1X1_df = pd.DataFrame(scaler.inverse_transform(X), columns=['Age','Income','Spending Score','Savings'])
+Q1X1_df['Cluster'] = label_2
+
+cl_group = Q1X1_df.groupby(['Cluster']).agg('describe')
+
+cl_group['Age']
+cl_group['Income']
+cl_group['Spending Score']
+cl_group['Savings']
+
+#Relative Importance of Features
+
+col_names = df1.columns
+
+all_means = label_2.mean(axis=0)
+
+relative_imp = k_means2.cluster_centers_ - all_means
+
+plt.figure(figsize=(8, 4));
+plt.title('Relative importance of features');
+sns.heatmap(data=relative_imp, 
+            annot=scaler.inverse_transform(relative_imp), 
+            fmt='.2f', 
+            cmap='RdYlGn', 
+            robust=True, 
+            square=False,
+            xticklabels=col_names, 
+            yticklabels=['Cluster {}'.format(x) for x in range(5)]);
+
+## 1.2: Clustering Algorithm #2
+
+# Using DBSCAN with min_samples = 8 (4 features * 2)
+db = DBSCAN(eps=0.3, min_samples = 8)
+db.fit(X)
+
+label_3 = db.labels_
+label_3
+
+sil3 = silhouette_score(X, label_3)
+ch3 = calinski_harabasz_score(X, label_3)
+
+print(sil3)
+print(ch3)
+
+#DBSCAN hyperparameter tuning with Elbow Method
+silhouettes = {}
+
+epss = np.arange(0.1, 0.9, 0.1)
+minss = [3, 4, 5, 6, 7, 8, 9, 10]
+
+ss = np.zeros((len(epss), len(minss)))
+
+for i, eps in enumerate(epss):
+    for j, mins in enumerate(minss):
+        db = DBSCAN(eps=eps, min_samples=mins).fit(X)
+        if len(set(db.labels_)) == 1:
+            ss[i, j] = -1
+        else:
+            ss[i, j] = silhouette_score(X, db.labels_, metric='euclidean')
+    
+
+plt.figure();
+for i in range(len(minss)):
+    plt.plot(epss, ss[:, i], label="MinPts = {}".format(minss[i]));
+plt.title('DBSCAN, Elbow Method')
+plt.xlabel("Eps");
+plt.ylabel("Silhouette");
+plt.legend();
+
+Decide to use eps = 0.4, and keep min_samples = 8
+
+# Using DBSCAN with min_samples = 8 (4 features * 2) and eps = 0.4
+db2 = DBSCAN(eps=0.4, min_samples = 8)
+db2.fit(X)
+
+label_4 = db2.labels_
+label_4
+
+sil4 = silhouette_score(X, label_4)
+ch4 = calinski_harabasz_score(X, label_4)
+
+print(sil4)
+print(ch4)
+
+# Number of clusters in labels, ignoring noise if present.
+n_clusters_ = len(set(label_4)) - (1 if -1 in label_4 else 0)
+n_noise_ = list(label_4).count(-1)
+print('Estimated number of clusters: %d' % n_clusters_)
+print('Estimated number of noise points: %d' % n_noise_)
+
+#count of customers in each cluster
+np.unique(label_4, return_counts=True)
+
+print(X)
+
+#Feature Stats for each cluster
+
+Q1X2_df = pd.DataFrame(scaler.inverse_transform(X), columns=['Age','Income','Spending Score','Savings'])
+Q1X2_df['Cluster'] = label_4
+
+cl_group1 = Q1X2_df.groupby(['Cluster']).agg('describe')
+
+cl_group1['Age']
+cl_group1['Income']
+cl_group1['Spending Score']
+cl_group1['Savings']
