@@ -1,0 +1,263 @@
+# DO NOT MODIFY THIS CELL
+
+# First, we'll read the provided labeled training data
+df3 = pd.read_csv("DATA PATH")
+df3.info()
+
+from sklearn.model_selection import train_test_split
+
+X = df3.drop('BadCredit', axis=1) #.select_dtypes(['number'])
+y = df3['BadCredit']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+## 3.1: Baseline model
+
+df3.head(5)
+
+#Check for missing data
+X_train.isnull().sum()
+
+#encoding categorical variables
+from sklearn.preprocessing import LabelEncoder
+
+X_train1 = X_train.drop('UserID', axis=1)
+
+label_encoder = LabelEncoder()
+
+train_str = X_train1.select_dtypes(include = ['object'])
+train_num = X_train1.select_dtypes(exclude = ['object'])
+
+for feat in train_str:
+    train_str[feat] = label_encoder.fit_transform(train_str[feat].astype(str))
+
+enc_train = pd.concat([train_num,train_str], axis=1)
+enc_train.info()
+
+#Base Random Forest Model
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+
+clf_rf = RandomForestClassifier(
+    random_state=0)
+clf_rf.fit(enc_train, y_train)
+
+scores = cross_val_score(clf_rf, enc_train, y_train, cv = 15, scoring = 'f1_macro')
+scores
+
+print(scores.mean())
+
+## 3.2: Feature engineering
+
+#See Distribution plots
+
+sns.distplot(X_train1.NumberPets)
+
+sns.distplot(X_train1.PreviousAccounts)
+
+sns.distplot(X_train1.ResidenceDuration)
+
+sns.distplot(X_train1.Amount)
+
+Decide to log amount and scale numeric values based on the distribution and the values being so different (0,1 and then 3500 for amount)
+
+sns.distplot(X_train1.Duration)
+
+X_dateofbirth = X_train.DateOfBirth
+X_train2 = X_train.drop(['UserID','DateOfBirth'], axis=1)
+
+
+train_str = X_train2.select_dtypes(include = ['object'])
+train_num = X_train2.select_dtypes(exclude = ['object'])
+
+for feat in train_str:
+    train_str[feat] = label_encoder.fit_transform(train_str[feat].astype(str))
+
+enc_train1 = pd.concat([train_num,train_str,X_dateofbirth], axis=1)
+enc_train1.info()
+
+#Pipeline1
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, LabelEncoder, OrdinalEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.feature_selection import SelectKBest
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import cross_val_score, GridSearchCV
+
+numeric_features = ['PreviousDefault', 'NumberPets', 'PreviousAccounts', 'ResidenceDuration', 'Amount', 'Married', 'Duration']
+
+# Date of birth to age
+def get_age_years(feature):
+  res = np.array([])
+  for instance in feature:
+    age = 2021 - int(instance[0:4])
+    res = np.append(res, age)
+  return res.reshape(-1, 1)
+
+clf = RandomForestClassifier(random_state=42)
+
+numeric_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer()),
+    ('scaler', StandardScaler()),
+    ])
+
+
+preprocessor1 = Pipeline(steps=[
+      ('ct', ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            (('amount_log', FunctionTransformer(np.log10, validate=False), ['Amount'])),
+            ('age', FunctionTransformer(get_age_years, validate=False), 'DateOfBirth')]))
+      ])
+
+pipe1 = Pipeline(steps=[('preprocessor', preprocessor1),  ('clf', clf)])
+
+scores1 = cross_val_score(pipe1, enc_train1, y_train, scoring='f1_macro', cv = 15)
+
+
+
+
+scores1
+print(scores1.mean())
+
+
+F1 score improved by 0.01 from the base model
+
+## 3.3: Feature selection
+
+#see correlation
+train = pd.concat([X_train, y_train], axis=1)
+
+corr=train.corr()
+fig, ax = plt.subplots(figsize=(15,15))  
+sns.heatmap(corr,xticklabels=True, yticklabels=True, annot=True, fmt=".2f")
+plt.show()
+
+Not too many correlated numeric variables, decide to drop some features
+
+#see what are top 2 features 
+
+from sklearn.feature_selection import SelectKBest, mutual_info_regression
+#Select top 2 features based on mutual info regression
+selector = SelectKBest(mutual_info_regression, k =2)
+selector.fit(enc_train, y_train)
+enc_train.columns[selector.get_support()]
+
+numeric_features = ['PreviousDefault', 'NumberPets', 'PreviousAccounts', 'ResidenceDuration', 'Amount', 'Married', 'Duration']
+
+drop_features = ['NumberPets','FirstName', 'LastName']
+
+# Date of birth to age
+def get_age_years(feature):
+  res = np.array([])
+  for instance in feature:
+    age = 2021 - int(instance[0:4])
+    res = np.append(res, age)
+  return res.reshape(-1, 1)
+
+clf = RandomForestClassifier(random_state=42)
+
+numeric_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer()),
+    ('scaler', StandardScaler()),
+    ])
+
+preprocessor2 = Pipeline(steps=[
+      ('ct', ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            ('amount_scale', StandardScaler(), ['Amount']),
+            ('age', FunctionTransformer(get_age_years, validate=False), 'DateOfBirth'),
+            ('drop', 'drop', drop_features)]))
+      ])
+
+pipe2 = Pipeline(steps=[('preprocessor', preprocessor2),  ('clf', clf)])
+
+scores2 = cross_val_score(pipe2, enc_train1, y_train, scoring='f1_macro', cv = 15)
+
+
+
+scores2
+print(scores2.mean())
+
+
+F1 score didn't improve, it declined slightly
+
+## 3.4: Hyperparameter tuning
+
+from sklearn.model_selection import GridSearchCV
+
+numeric_features = ['PreviousDefault', 'NumberPets', 'PreviousAccounts', 'ResidenceDuration', 'Amount', 'Married', 'Duration']
+
+drop_features = ['NumberPets','FirstName', 'LastName']
+
+# Date of birth to age
+def get_age_years(feature):
+  res = np.array([])
+  for instance in feature:
+    age = 2021 - int(instance[0:4])
+    res = np.append(res, age)
+  return res.reshape(-1, 1)
+
+clf = RandomForestClassifier(random_state=42)
+
+numeric_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer()),
+    ('scaler', StandardScaler()),
+    ])
+
+preprocessor3 = Pipeline(steps=[
+      ('ct', ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            ('amount_scale', StandardScaler(), ['Amount']),
+            ('age', FunctionTransformer(get_age_years, validate=False), 'DateOfBirth'),
+            ('drop', 'drop', drop_features)],
+            remainder = 'passthrough', 
+            sparse_threshold=0)),
+      ('feature_selector', SelectKBest(k=10)),
+    ])
+
+pipe3 = Pipeline(steps=[('preprocessor', preprocessor3),  ('clf', clf)])
+
+param_grid = {
+    'preprocessor__ct__num__scaler__with_mean': [True, False],
+    'preprocessor__ct__num__scaler__with_std': [True, False],
+    'preprocessor__feature_selector__k': [5, 10, 14],
+    'clf__max_depth': [None, 3, 10],
+    'clf__criterion': ['gini', 'entropy'], 
+    'clf__class_weight':[None, 'balanced'],
+}
+
+pipe3 = GridSearchCV(pipe3, param_grid, cv=15, n_jobs=-1, 
+                     scoring='f1_macro', return_train_score=True, verbose=2, error_score='raise')
+
+pipe3 = pipe3.fit(enc_train1, y_train)
+
+
+print(pipe3.best_score_)
+print(pipe3.best_params_)
+
+
+Model improved by 0.03 of F1 score.
+
+## 3.5: Performance estimation
+
+#Using Test DAta
+
+X_test_dateofbirth = X_test.DateOfBirth
+X_test1 = X_test.drop(['UserID','DateOfBirth'], axis=1)
+
+
+test_str = X_test1.select_dtypes(include = ['object'])
+test_num = X_test1.select_dtypes(exclude = ['object'])
+
+for feat in test_str:
+    test_str[feat] = label_encoder.fit_transform(test_str[feat].astype(str))
+
+enc_test = pd.concat([test_num,test_str,X_test_dateofbirth], axis=1)
+enc_test.info()
+
+pipe3.score(enc_test, y_test)
